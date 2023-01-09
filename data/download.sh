@@ -1,0 +1,1 @@
+wget https://huggingface.co/datasets/silver/lccc/resolve/main/lccc_large.jsonl.gz

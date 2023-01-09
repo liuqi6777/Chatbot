@@ -1,10 +1,14 @@
 # Chatbot
 
-## introduction
+## 1. Introduction
 
-## How to use it
+A hybrid retrieval-generation chatbot. 
 
-### Prepare data and build index
+<p align="center"><img src="doc/架构.png" width="50%" height="50%"></img></p>
+
+## 2. How to use the code
+
+### 2.1 Prepare data and build index
 
 ```bash
 # download datasets
@@ -22,13 +26,24 @@ python indexing/build_response_table.py
 
 The built index is under `./index` folder. 
 
-### Run the project
+### 2.2 Run the project
 
-After you finished above preparations, you can run the project directly:
+After finished above preparations, you can run the project directly:
 
 ```bash
-python app.py
+python app.py --do_retrieval --do_generate
 ```
 
-If you want to change the config (e.g. only use retrieval module but not generating module), please refer to `config.py`.
+Note that the code will automatically download the pretrain models' checkpoints. If you want to donwload them manually, you can get more information from the model's huggingface page: [CDial-GPT_LCCC-large](https://huggingface.co/thu-coai/CDial-GPT_LCCC-large) and [sbert-chinese-nli](https://huggingface.co/uer/sbert-base-chinese-nli). Don't forget to modify the code to use right path.
+
+For using only retrieval module or generating module, you can run:
+
+```bash
+# only retrieval
+python app.py --do_retrieval
+# or only generating
+python app.py --do_generate
+```
+
+Refer to the code for more about arguments.
 
