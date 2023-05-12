@@ -15,9 +15,6 @@ from pyserini.search.lucene import LuceneSearcher
 torch.manual_seed(42)
 
 
-
-
-
 @dataclass
 class Arguments:
     do_retrieval: bool = False
@@ -34,14 +31,42 @@ class Arguments:
     no_sample: bool = False
 
 
-def retrieval(utterance: str) -> List[str]:
+def retrieval(utterance: str, searcher, database) -> List[str]:
     # for u in utterances:
     #     hits = searcher.search(u)
     hits = searcher.search(utterance)
     sql = f"select response from responses where query_id = {hits[0].docid}"
-    res = cur.execute(sql)
+    res = database.execute(sql)
     candidates = [x[0] for x in res.fetchall()]
     return candidates
+
+
+def rerank(candidates: List[str], utterance: str, tokenizer, model) -> str:
+    cands_input = tokenizer(candidates, padding=True, return_tensors='pt')
+    uttr_input = tokenizer(utterance, padding=True, return_tensors='pt')
+
+    with torch.no_grad():
+        cands_embeddings = model(**cands_input)
+        uttr_embeddings = model(**uttr_input)
+        
+    def mean_pooling(model_output, attention_mask):
+        # First element of model_output contains all token embeddings
+        token_embeddings = model_output[0]
+        input_mask_expanded = attention_mask.unsqueeze(
+            -1).expand(token_embeddings.size()).float()
+        return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+
+    # Perform pooling. In this case, mean pooling.
+    cands_embeddings = mean_pooling(
+        cands_embeddings, cands_input['attention_mask'])
+    uttr_embeddings = mean_pooling(
+        uttr_embeddings, uttr_input['attention_mask'])
+
+    score = cands_embeddings @ uttr_embeddings.T
+    top = torch.argmax(score)
+    response = candidates[top]
+    idx = -1 if top == len(candidates) - 1 else top
+    return response, score[top].item(), idx
 
 
 SPECIAL_TOKENS = ["[CLS]", "[SEP]", "[PAD]", "[speaker1]", "[speaker2]"]
@@ -135,46 +160,13 @@ def sample_sequence(history, tokenizer, model, args, current_output=None):
     return current_output
 
 
-def mean_pooling(model_output, attention_mask):
-    # First element of model_output contains all token embeddings
-    token_embeddings = model_output[0]
-    input_mask_expanded = attention_mask.unsqueeze(
-        -1).expand(token_embeddings.size()).float()
-    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-
-
-def rerank(candidates: List[str], utterance: str) -> str:
-    cands_input = reranker_tokenizer(
-        candidates, padding=True, return_tensors='pt')
-    uttr_input = reranker_tokenizer(
-        utterance, padding=True, return_tensors='pt')
-
+def generate(historys, tokenizer, model, args):
     with torch.no_grad():
-        cands_embeddings = reranker(**cands_input)
-        uttr_embeddings = reranker(**uttr_input)
-
-    # Perform pooling. In this case, mean pooling.
-    cands_embeddings = mean_pooling(
-        cands_embeddings, cands_input['attention_mask'])
-    uttr_embeddings = mean_pooling(
-        uttr_embeddings, uttr_input['attention_mask'])
-
-    score = cands_embeddings @ uttr_embeddings.T
-    top = torch.argmax(score)
-    response = candidates[top]
-    idx = -1 if top == len(candidates) - 1 else top
-    return response, score[top].item(), idx
-
-
-def tokenize(obj):
-    if isinstance(obj, str):
-        return generator_tokenizer.convert_tokens_to_ids(generator_tokenizer.tokenize(obj))
-    if isinstance(obj, dict):
-        return dict((n, tokenize(o)) for n, o in obj.items())
-    return list(tokenize(o) for o in obj)
-
-
-history = []
+        historys = historys[-(2 * args.max_history + 1):]
+        history_ids = [tokenizer.convert_tokens_to_ids(tokenizer.tokenize(x)) for x in historys]
+        out_ids = sample_sequence(history_ids, tokenizer, model, args)
+        response = tokenizer.decode(out_ids, skip_special_tokens=True)
+        return response
 
 
 if __name__ == '__main__':
@@ -188,36 +180,49 @@ if __name__ == '__main__':
         args = parser.parse_args_into_dataclasses()[0]
         
     assert args.do_retrieval or args.do_generate, "must select one of retrieval mode or generate mode, or both"
+    
+    if args.do_retrieval:
+        searcher = LuceneSearcher('index/queries/')
+        searcher.set_language('zh')
+        con = sqlite3.connect('index/responses.sqlite')
+        cur = con.cursor()
+        
+        reranker_tokenizer = AutoTokenizer.from_pretrained(
+            'uer/sbert-base-chinese-nli')
+        reranker = AutoModel.from_pretrained('uer/sbert-base-chinese-nli')
+        reranker.eval()
+
+    if args.do_generate:
+        generator = OpenAIGPTLMHeadModel.from_pretrained(
+            "thu-coai/CDial-GPT_LCCC-large", ignore_mismatched_sizes=True)
+        generator_tokenizer = BertTokenizer.from_pretrained(
+            "thu-coai/CDial-GPT_LCCC-large")
+        generator.eval()
 
 
-    history_ids = []
+    historys = []
     while True:
         raw_text = input(">>> ")
         if not raw_text:
             break
-        history_ids.append(tokenize(raw_text))
+        historys.append(raw_text)
         
         candidates = []
 
         if args.do_retrieval:
             try:
-                retrieval_cands = retrieval(raw_text)
+                retrieval_cands = retrieval(raw_text, searcher, cur)
             except:
                 retrieval_cands = []
             finally:
                 candidates += retrieval_cands
 
         if args.do_generate:
-            with torch.no_grad():
-                out_ids = sample_sequence(
-                    history_ids, generator_tokenizer, generator, args)
-            history_ids.append(out_ids)
-            history_ids = history_ids[-(2 * args.max_history + 1):]
-            out_text = generator_tokenizer.decode(out_ids, skip_special_tokens=True)
-            candidates += [out_text]
+            generate_cands = generate(historys, generator_tokenizer, generator, args)
+            candidates.append(generate_cands)
         
         if len(candidates) > 1:
-            response, score, _ = rerank(candidates=candidates, utterance=raw_text)
+            response, score, _ = rerank(candidates=candidates, utterance=raw_text, tokenizer=reranker_tokenizer, model=reranker)
         else:
             response = candidates[0]
         
