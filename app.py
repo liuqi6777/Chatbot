@@ -15,23 +15,7 @@ from pyserini.search.lucene import LuceneSearcher
 torch.manual_seed(42)
 
 
-searcher = LuceneSearcher('index/queries/')
-searcher.set_language('zh')
 
-con = sqlite3.connect('index/responses.sqlite')
-cur = con.cursor()
-
-generator = OpenAIGPTLMHeadModel.from_pretrained(
-    "thu-coai/CDial-GPT_LCCC-large", ignore_mismatched_sizes=True)
-generator_tokenizer = BertTokenizer.from_pretrained(
-    "thu-coai/CDial-GPT_LCCC-large")
-
-reranker_tokenizer = AutoTokenizer.from_pretrained(
-    'uer/sbert-base-chinese-nli')
-reranker = AutoModel.from_pretrained('uer/sbert-base-chinese-nli')
-
-generator.eval()
-reranker.eval()
 
 
 @dataclass

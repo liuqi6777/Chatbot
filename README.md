@@ -12,12 +12,16 @@ A hybrid retrieval-generation chatbot.
 
 ```bash
 # download datasets
-sh data/download.sh
+cd data
+sh download.sh
+gunzip lccc_large.jsonl.gz
+cd ..
 
 # prepare single turn dialog dataset
-python prepare_data.py
+python data/prepare_data.py
 
 # build inverted index for query
+mkdir -p data/queries
 sh indexing/build_query_index.sh
 
 # build a sql table which allow us to select response given query's id
