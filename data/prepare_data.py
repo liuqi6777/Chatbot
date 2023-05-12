@@ -13,7 +13,7 @@ if __name__ == '__main__':
                 data = [''.join(x.split()) for x in data]
                 fout.write(json.dumps(data, ensure_ascii=False) + '\n')
 
-    os.mkdir('data/queries', exist_ok=True)
+    os.makedirs('data/queries', exist_ok=True)
     with open('data/single_turn.jsonl', 'r', encoding='utf-8') as fin, open('data/queries/queries.jsonl', 'w', encoding='utf-8') as fout:
         for i, line in tqdm(enumerate(fin)):
             query = json.loads(line.rstrip())[0]
